@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -45,11 +47,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	// media := header.Header.Get("Content-Type")
-	// if media == "" {
-	// 	respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
-	// 	return
-	// }
 	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid Content-Type for thumbnail", err)
@@ -59,12 +56,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Invalid Content-Type for thumbnail", nil)
 		return
 	}
-
-	// data, err := io.ReadAll(file)
-	// if err != nil {
-	// 	respondWithError(w, http.StatusInternalServerError, "Error reading file", err)
-	// 	return
-	// }
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -79,7 +70,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	// swap b64 encoding to filesystem storage
 	ext := strings.Split(mediaType, "/")[1]
 
-	dataUrl := filepath.Join(cfg.assetsRoot, videoIDString+fmt.Sprintf(".%s", ext))
+	path := make([]byte, 32)
+	rand.Read(path)
+
+	fp := base64.RawURLEncoding.EncodeToString(path)
+
+	dataUrl := filepath.Join(cfg.assetsRoot, fp+fmt.Sprintf(".%s", ext))
 	thumbFile, err := os.Create(dataUrl)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error creating file", err)
