@@ -1,14 +1,12 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -19,6 +17,7 @@ import (
 const uploadLimit int = 1 << 30
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("handlerUploadVideo called")
 	defer r.Body.Close()
 
 	videoIDString := r.PathValue("videoID")
@@ -65,8 +64,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ext := strings.Split(mimeType, "/")[1]
-
 	tmp, err := os.CreateTemp("", "tubey-upload.mp4")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error creating tmp file", err)
@@ -93,16 +90,14 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Error opening fast start file", err)
 		return
 	}
-	defer os.Remove(fastStartFile.Name())
 	defer fastStartFile.Close()
 
+	prefix := ""
 	ratio, err := getVideoAspectRatio(fastStartFile.Name())
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error getting video aspect ratio", err)
 		return
 	}
-
-	prefix := ""
 	switch ratio {
 	case "16:9":
 		prefix = "landscape/"
@@ -112,27 +107,31 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		prefix = "other/"
 	}
 
-	path := make([]byte, 32)
-	rand.Read(path)
-
-	fileKey := prefix + base64.RawURLEncoding.EncodeToString(path)
+	key := getAssetPath(mimeType)
+	key = filepath.Join(prefix, key)
 
 	cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
-		Key:         aws.String(fmt.Sprintf("%s/%s.%s", fileKey, videoID, ext)),
+		Key:         aws.String(key),
 		Body:        fastStartFile,
-		ContentType: aws.String("video/mp4"),
+		ContentType: aws.String(mimeType),
 	})
 
 	// https://<bucket-name>.s3.<region>.amazonaws.com/<key>
-	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s/%s.%s", cfg.s3Bucket, cfg.s3Region, fileKey, videoID, ext)
+	// url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s/%s.%s", cfg.s3Bucket, cfg.s3Region, fileKey, videoID, ext)
+	url := fmt.Sprintf("%s,%s", cfg.s3Bucket, key)
 	video.VideoURL = &url
 
-	err = cfg.db.UpdateVideo(video)
-	if err != nil {
+	if err = cfg.db.UpdateVideo(video); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to update video", err)
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, video)
+	presignedVid, err := cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error generating presigned video url", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, presignedVid)
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -82,6 +83,7 @@ func (cfg *apiConfig) handlerVideoMetaDelete(w http.ResponseWriter, r *http.Requ
 }
 
 func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("handlerVideoGet called")
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
 	if err != nil {
@@ -95,10 +97,17 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, video)
+	presignedVid, err := cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error generating presigned video url", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, presignedVid)
 }
 
 func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("handlerVideosRetrieve called")
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
@@ -114,6 +123,15 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't retrieve videos", err)
 		return
+	}
+
+	for i, v := range videos {
+		presignedVid, err := cfg.dbVideoToSignedVideo(v)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Error generating presigned video url", err)
+			return
+		}
+		videos[i] = presignedVid
 	}
 
 	respondWithJSON(w, http.StatusOK, videos)
